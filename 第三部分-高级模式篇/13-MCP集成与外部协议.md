@@ -264,6 +264,76 @@ def _local_uri_to_virtual_path(
 7. **OAuth 自动刷新。** HTTP/SSE 支持 client_credentials/refresh_token，自动刷新 token + 注入 Authorization 头。
 8. **热重载闭环。** Gateway API 写文件 → mtime 检测 → 重初始化 → 下次建图用新工具，无需重启。
 
+## 实战示例：配一个 GitHub MCP 服务器，Agent 怎么"自动发现"它的工具
+
+MCP 让 Agent 接外部工具协议。我们看从"配一个 MCP 服务器"到"Agent 用上它的工具"的全流程。
+
+**场景**：你在 `extensions_config.json` 加了一个 GitHub MCP 服务器，想让 Agent 能查仓库 issue。不重启，下条消息 Agent 就能用上 `github.list_issues` 之类的工具。
+
+**第 1 步：配置驱动 MCP 服务器。** `extensions_config.json` 的 `mcpServers` 段声明服务器（stdio/sse/http 三种传输）。程序化读写，可经 Gateway API 改。这是"配置即扩展"。
+
+**第 2 步：建图时惰性加载 + 缓存。** `get_available_tools`（第 3 章）调 `get_cached_mcp_tools` 拿 MCP 工具。它惰性初始化——第一次调才真连服务器：
+
+```python
+// backend/packages/harness/deerflow/mcp/cache.py:64-77（节选）
+async with _initialization_lock:
+    if _cache_initialized:
+        return _mcp_tools_cache or []       # 已初始化直接返回缓存
+    from deerflow.mcp.tools import get_mcp_tools
+    _mcp_tools_cache = await get_mcp_tools()
+    _cache_initialized = True
+    _config_mtime = _get_config_mtime()     # 记下配置文件 mtime
+    ...
+```
+
+`get_mcp_tools`（`tools.py:541`）用 `MultiServerMCPClient`（`tools.py:553`）连所有配置的服务器，把它们的工具收集成 `BaseTool` 列表。
+
+**第 3 步：mtime 检测配置变化（热重载闭环）。** 你经 Gateway API 改了配置（加了服务器），不重启怎么生效？靠 mtime 缓存失效：
+
+```python
+// backend/packages/harness/deerflow/mcp/cache.py:37-50（节选）
+if not _cache_initialized:
+    return False  # 还没初始化
+current_mtime = _get_config_mtime()
+# If the config file has been modified since we cached, it's stale
+if current_mtime > _config_mtime:
+    logger.info(f"MCP config file has been modified (mtime: {_config_mtime} -> {current_mtime}), cache is stale")
+    return True
+```
+
+每次取工具前比配置文件 mtime：变了就判定缓存失效，重新初始化连服务器。这就闭环了——Gateway API 写文件 → mtime 变 → 下次建图重初始化 → Agent 用上新工具，全程不重启。
+
+**第 4 步：路径翻译隐藏物理路径。** MCP 工具返回的本地文件路径（如 `/data/repo/issue.md`）被 `_local_uri_to_virtual_path` 翻译成虚拟路径，让 Agent 看到统一的 `/mnt/...` 视角，且**线程树外的不暴露**（安全）：
+
+```python
+// backend/packages/harness/deerflow/mcp/tools.py:77
+def _local_uri_to_virtual_path(uri: str, ...) -> ...:
+```
+
+**第 5 步：工具进模型上下文。** MCP 工具和内置工具一起进 `get_available_tools`（第 3 章装配），同名按 `config > builtins > MCP > ACP` 去重。模型看到 `github.list_issues` 就能调，像调 `bash` 一样自然。
+
+```mermaid
+flowchart LR
+    cfg["extensions_config.json<br/>+ github MCP server"] --> init["首次 get_cached_mcp_tools<br/>惰性初始化"]
+    init --> client["MultiServerMCPClient<br/>连服务器收工具"]
+    client --> cache["缓存 + 记 mtime"]
+    cache --> tools["github.list_issues 等<br/>进 get_available_tools"]
+    tools --> model["模型像调 bash 一样调"]
+    cfg -.->|"Gateway API 改配置"| mtime["mtime 变 → 失效重初始化"]
+    mtime -.-> init
+
+    classDef cfg fill:#fef9f0,stroke:#f59e0b,stroke-width:2px,color:#92400e
+    classDef step fill:#e8f4f8,stroke:#2196F3,stroke-width:2px,color:#1565C0
+    classDef out fill:#f0fdf4,stroke:#22c55e,stroke-width:2px,color:#166534
+    class cfg mtime
+    class init,client,cache,tools step
+    class model out
+```
+
+**为什么这个例子重要？** 它把"MCP 集成"落到一次真实的"配服务器→自动用上工具"上。你看到：配置驱动、惰性加载+缓存、mtime 失效实现热重载闭环、路径翻译统一视角。这是 Agent 接入外部工具生态的标准方式——不写代码，改配置就能接 GitHub/数据库/任意 MCP 服务。第 14 章会讲 MCP 工具的延迟加载（`tool_search`），第 18 章会把它放进扩展生态。
+
+---
+
 ## 实战练习
 
 **练习 1：配置一个 stdio MCP 服务器。** 在 `extensions_config.json` 配一个简单的 stdio MCP 服务器（如官方的 filesystem server）。启动 DeerFlow，观察 `initialize_mcp_tools` 加载它的工具，Agent 工具箱出现 MCP 工具。

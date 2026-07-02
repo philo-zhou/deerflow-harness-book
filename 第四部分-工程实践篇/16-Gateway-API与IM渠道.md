@@ -229,6 +229,68 @@ sequenceDiagram
 6. **所有权转移：最新绑定获胜。** DB 部分唯一索引强制，并发不都成 connected。连接码机密性是绑定安全基石，`allowed_users` 只门控普通消息。
 7. **Gateway lifespan 不缓存配置到 app.state。** 启动快照只做一次性工作，请求时走 `get_app_config()` 热重载。tiktoken 预热 + 5s 超时前移昂贵操作。
 
+## 实战示例：在飞书里 @机器人 问问题，消息怎么变成 Agent 回复
+
+第 1 章讲浏览器请求。这一章讲另一条入口——IM 平台（飞书/Slack/...）怎么桥接进同一个 Agent。
+
+**场景**：你在飞书群里 @机器人，发 **"总结一下今天的会议纪要"**。这条飞书消息怎么变成 Agent 的回复，又怎么回到飞书？
+
+**第 1 步：Gateway lifespan 启动时建好一切。** 飞书渠道的 IM 客户端是"启动锁"——`lifespan` 启动时一次性建好，不随配置热重载：
+
+```python
+// backend/app/gateway/app.py:163-176（节选）
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    """Application lifespan handler."""
+    startup_config = get_app_config()                    # 启动快照(只做一次性工作)
+    apply_logging_level(startup_config.log_level)
+    ...
+    # 注意:启动快照不缓存到 app.state —— 请求时走 get_app_config() 热重载
+```
+
+`lifespan` 还预热 tiktoken（避免首次记忆注入卡在 BPE 下载，issue #3402）。启动快照只用于"一次性"工作（日志级、引擎、渠道），请求时配置走 `get_app_config()` 热重载——这正是第 5 章热重载契约的执行点。
+
+**第 2 步：飞书消息进 MessageBus。** `FeishuChannel`（`channels/feishu.py:37`）接收飞书 webhook，把消息标准化后推入 `MessageBus`（`message_bus.py:134`）的入站队列。`Channel` 是抽象基类，飞书/Slack/钉钉/Discord/Telegram 各自实现——统一接口，差异隔离。
+
+**第 3 步：ChannelManager 分发到 Agent。** `ChannelManager`（`manager.py:775`）从 MessageBus 读入站消息，创建/复用 Gateway 上的 thread，调 `runs.wait` 驱动 Agent：
+
+```python
+// backend/app/channels/manager.py:775-783
+class ChannelManager:
+    """Core dispatcher that bridges IM channels to the DeerFlow agent.
+    It reads from the MessageBus inbound queue, creates/reuses threads on
+    Gateway's LangGraph-compatible API, sends messages via ``runs.wait``,
+    and publishes outbound responses back through the bus.
+    """
+```
+
+注意"creates/reuses threads"——飞书会话 id 映射到 Gateway 的 thread_id，同一会话的多条消息进同一线程，Agent 有上下文。这是 IM 渠道的会话映射。
+
+**第 4 步：Agent 回复 → 出站 → 飞书。** `ChannelManager` 把 Agent 回复通过 MessageBus 出站，`FeishuChannel` 调飞书 API 发回群里。一条 IM 消息完成往返。
+
+```mermaid
+flowchart LR
+    fs["飞书群<br/>@机器人问问题"] --> webhook["FeishuChannel<br/>接收 webhook"]
+    webhook --> bus["MessageBus<br/>入站队列"]
+    bus --> cm["ChannelManager<br/>分发"]
+    cm -->|"create/reuse thread"| gw["Gateway runs.wait<br/>驱动 Agent"]
+    gw --> agent["Lead Agent<br/>第2章循环"]
+    agent --> out["出站回复"]
+    out --> bus2["MessageBus 出站"]
+    bus2 --> fs2["FeishuChannel<br/>调飞书 API 发回"]
+    fs2 --> fs
+
+    classDef im fill:#fef9f0,stroke:#f59e0b,stroke-width:2px,color:#92400e
+    classDef core fill:#e8f4f8,stroke:#2196F3,stroke-width:2px,color:#1565C0
+    classDef ag fill:#f3e8ff,stroke:#9333ea,stroke-width:2px,color:#6b21a8
+    class fs,webhook,fs2 im
+    class bus,cm,gw,bus2 core
+    class agent ag
+```
+
+**为什么这个例子重要？** 它把"Gateway 与 IM 渠道"落到一次真实的飞书往返上。你看到：`lifespan` 是启动锁字段的家（第 5 章），`Channel` 抽象统一五种 IM 平台，`ChannelManager` 做会话映射 + 分发，MessageBus 解耦入站/出站。这让同一套 Harness 能被浏览器、终端、五种 IM 平台消费——对外接入层的核心价值。第 17 章会讲另一条入口（嵌入式客户端，无 HTTP）。
+
+---
+
 ## 实战练习
 
 **练习 1：观察 lifespan。** 启动 Gateway，看日志确认：配置加载 → tiktoken 预热（或 char 模式跳过）→ 运行时组件初始化 → 渠道服务启动。

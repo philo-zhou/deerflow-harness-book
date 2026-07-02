@@ -383,6 +383,79 @@ flowchart LR
 7. **并发限制中间件兜底。** 模型可能超额并发 `task`，`SubagentLimitMiddleware` 在 `after_model` 截断，框架兜底模型不可控行为。
 8. **延迟工具 fail-closed。** 子智能体镜像 lead 的延迟工具策略，过滤后才组装 `tool_search`，不绑定全量 MCP schema。
 
+## 实战示例：一次深度研究，Lead Agent 派出 3 个分身并行调研
+
+子智能体是 Lead Agent 的"分身术"。我们看一次真实的多智能体并行怎么发生。
+
+**场景**：用户说 **"调研 LangGraph、AutoGen、CrewAI 三个框架的架构差异"**。一个 Agent 串行调研要很久；Lead Agent 拆成 3 个子任务，派 3 个分身并行。
+
+**第 1 步：subagent_enabled 打开 task 工具 + 协调者提示。** 用户开 Ultra 模式（`subagent_enabled=True`）后，`get_available_tools` 把 `task` 工具加进工具箱（第 3 章），系统提示注入协调者身份（第 11 章）。Lead Agent 现在有权"委派"。
+
+**第 2 步：模型调 task 工具委派。** Lead Agent 判断"这能拆 3 份并行"，连发 3 个 `task` 工具调用：
+
+```python
+// backend/packages/harness/deerflow/tools/builtins/task_tool.py:187-191
+@tool("task", parse_docstring=True)
+async def task_tool(runtime: Runtime, description: str, prompt: str, subagent_type: str) -> str:
+    """Launch a sub-agent to handle a task ...
+    """
+```
+
+`description="调研LangGraph"`（3-5 词标题）、`prompt="详细调研..."`（任务正文）、`subagent_type="general-purpose"`。3 个调用并行进入 `SubagentExecutor`。
+
+**第 3 步：双线程池调度。** 子智能体执行由 `SubagentExecutor`（`executor.py:278`）管，用**两个线程池**：
+
+```python
+// backend/packages/harness/deerflow/subagents/executor.py:143-145
+# Thread pool for background task scheduling and orchestration
+_scheduler_pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="subagent-scheduler-")
+```
+
+调度池（`max_workers=3`）排队编排、执行池跑实际 Agent。分离是为了"编排"和"执行"互不阻塞——3 个分身能真并行，且支持超时取消。
+
+**第 4 步：每个分身建独立上下文。** `_build_initial_state` 给每个子智能体建一份精简初始状态——它**继承父沙箱**（不隔离文件系统，能读父级写的文件）但**上下文完全隔离**（看不到主对话历史和其他分身）：
+
+```python
+// backend/packages/harness/deerflow/subagents/executor.py:440-451（节选）
+async def _build_initial_state(self, task: str) -> tuple[dict, list, "DeferredToolSetup"]:
+    """Build the initial state for agent execution."""
+    skills = await self._load_skills()
+    filtered_tools = self._apply_skill_allowed_tools(skills)   # allowed-tools 过滤
+    ...
+```
+
+注意 `general-purpose` 分身禁用了 `task`/`ask_clarification`/`present_files`（第 3 章）——防止子智能体再派子智能体（无限嵌套）、向用户提问、直接呈现文件。子智能体是专注的执行者。
+
+**第 5 步：结果回填。** 3 个分身各自搜索、阅读、整理，产出结构化结果。`task` 工具把这些结果作为 ToolMessage 回填给 Lead Agent。Lead Agent 看到三份调研，汇总成对比报告回给用户。
+
+```mermaid
+flowchart TD
+    lead["Lead Agent<br/>收到调研请求"] --> decide["判断: 可拆3份并行"]
+    decide --> t1["task: 调研LangGraph"]
+    decide --> t2["task: 调研AutoGen"]
+    decide --> t3["task: 调研CrewAI"]
+    t1 --> sched["调度池<br/>max_workers=3"]
+    t2 --> sched
+    t3 --> sched
+    sched --> e1["分身1<br/>独立上下文"]
+    sched --> e2["分身2<br/>独立上下文"]
+    sched --> e3["分身3<br/>独立上下文"]
+    e1 --> merge["结果回填<br/>Lead Agent 汇总"]
+    e2 --> merge
+    e3 --> merge
+
+    classDef lead fill:#f3e8ff,stroke:#9333ea,stroke-width:2px,color:#6b21a8
+    classDef sub fill:#e8f4f8,stroke:#2196F3,stroke-width:2px,color:#1565C0
+    classDef pool fill:#fef9f0,stroke:#f59e0b,stroke-width:2px,color:#92400e
+    class lead,decide,merge lead
+    class t1,t2,t3,e1,e2,e3 sub
+    class sched pool
+```
+
+**为什么这个例子重要？** 它把"子智能体"落到一次真实的并行调研上。你看到：`task` 工具是委派入口，双线程池分离调度与执行，分身继承父沙箱但隔离上下文（专注=结果好），禁用 task 防递归。第 11 章会讲 Lead 怎么变成"协调者"决定何时拆任务，第 14 章会讲分身的超时和检查点。
+
+---
+
 ## 实战练习
 
 **练习 1：观察上下文隔离。** 让 lead Agent 用 `task` 委派一个"读大文件并总结"的子任务。观察子智能体的工具调用（读文件、分块）是否出现在 lead 的对话历史里——应该不出现，只有最终总结回填。

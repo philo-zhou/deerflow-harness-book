@@ -249,6 +249,83 @@ def safe_add_column(table: str, column: sa.Column) -> None:
 6. **并发安全分级。** Postgres advisory lock 跨进程串行；SQLite per-engine Lock + 文件锁 + busy_timeout 跨进程 best-effort。多实例用 Postgres。
 7. **存储组件"接口 + 多实现"。** RunStore/thread_meta/channel_connections 等都是基类 + 内存/SQL 实现，可插拔后端。
 
+## 实战示例：升级 deerflow 后启动，schema 怎么"安全地"迁移到新版本
+
+持久化最怕的就是"schema 不匹配导致启动崩"。我们看一次真实的版本升级启动——`bootstrap_schema` 怎么把旧库安全带到新 schema。
+
+**场景**：你从 deerflow v0.9 升到 v1.0，新版本加了几张表、改了某列。`make dev` 启动时，`bootstrap_schema` 自动把旧库迁移到 head，且**幂等、不丢数据、并发安全**。
+
+**第 1 步：启动时一次性引导。** Gateway `lifespan`（第 16 章）启动时调 `init_engine_from_config` 建引擎，再调 `bootstrap_schema`：
+
+```python
+// backend/packages/harness/deerflow/persistence/bootstrap.py:399-410
+async def bootstrap_schema(engine: AsyncEngine, *, backend: str) -> None:
+    """Bring the DB schema to head.
+    Postgres calls are serialised across processes with an advisory lock.
+    SQLite calls are serialised inside one process and are best-effort across
+    processes via SQLite's file lock and ``busy_timeout``.
+    """
+    head = _get_head_revision()       # 目标版本
+    cfg = _get_alembic_config(engine)
+    async with _bootstrap_lock(engine, backend=backend):   # 跨进程锁
+        async with engine.connect() as conn:
+            state = await conn.run_sync(_reflect_state)     # 反射当前库状态
+        decision = _decide_state(state)                    # 三分支决策
+```
+
+注意 `_bootstrap_lock`——Postgres 用 advisory lock、SQLite 用文件锁 + `busy_timeout`，保证多 worker 同时启动不会同时改 schema 撞车。这是第 6 章并发安全的存储层延伸。
+
+**第 2 步：三分支决策——empty / legacy / versioned。** `_decide_state` 反射当前库，决定走哪条路：
+
+```python
+// backend/packages/harness/deerflow/persistence/bootstrap.py:415-431（节选）
+if decision == "empty":
+    logger.info("bootstrap: branch=empty -> create_all + stamp head")
+    async with engine.begin() as conn:
+        await conn.run_sync(_run_create_all_sync)          # 全新建表
+    await asyncio.to_thread(_stamp, cfg, head)             # 标记到 head
+elif decision == "legacy":
+    logger.info("bootstrap: branch=legacy -> create_all (backfill) + stamp baseline + upgrade head")
+    # 旧版无 alembic 的库：补建缺失表 + 标记基线 + 升到 head
+    ...
+elif decision == "versioned":
+    ...                                                    # 有版本记录：alembic upgrade head
+```
+
+- **empty**：全新库，`create_all` 建全部表 + stamp 到 head。
+- **legacy**：旧版库（没 alembic 版本表）——补建缺失的基线表、标记基线版本、再 upgrade。这条最 tricky，专门处理"从无版本管理时代升上来"。
+- **versioned**：已经是 alembic 管的，直接 `upgrade head`。
+
+**第 3 步：幂等 + 增量列迁移。** 即使列已存在，`safe_add_column` 检测列形状不一致才加（漂移检测），不重复报错。迁移可重复执行（幂等）——万一中途失败重跑也安全。
+
+**第 4 步：`include_object` 过滤。** alembic 的 `autogenerate` 会把库里"非 DeerFlow 管"的表也纳入 diff，`include_object` 过滤掉，只管自己的表——避免误删用户其他业务的表。
+
+```mermaid
+flowchart TD
+    start["启动 lifespan"] --> eng["init_engine_from_config<br/>建引擎(启动锁)"]
+    eng --> bs["bootstrap_schema"]
+    bs --> lock["跨进程锁<br/>advisory/file lock"]
+    lock --> refl["反射当前库状态"]
+    refl --> dec{"_decide_state<br/>三分支"}
+    dec -->|empty 全新库| e1["create_all + stamp head"]
+    dec -->|legacy 旧版库| e2["补建表 + 标基线 + upgrade"]
+    dec -->|versioned 已管理| e3["alembic upgrade head"]
+    e1 --> done["schema 到 head,启动完成"]
+    e2 --> done
+    e3 --> done
+
+    classDef a fill:#e8f4f8,stroke:#2196F3,stroke-width:2px,color:#1565C0
+    classDef dec fill:#fef9f0,stroke:#f59e0b,stroke-width:2px,color:#92400e
+    classDef out fill:#f0fdf4,stroke:#22c55e,stroke-width:2px,color:#166534
+    class start,eng,bs,lock,refl a
+    class dec dec
+    class e1,e2,e3,done out
+```
+
+**为什么这个例子重要？** 它把"持久化与迁移"落到一次真实的版本升级启动上。你看到：启动时一次性引导、三分支处理不同历史状态的库（empty/legacy/versioned）、跨进程锁保证并发安全、幂等可重跑。这是为什么 deerflow 升级后能"直接 `make dev` 就用"，不用手动跑迁移脚本——schema 自己会安全地追上代码。第 16 章的 `lifespan` 是这个引导的调用方，第 14 章的检查点就存在这个被引导好的库里。
+
+---
+
 ## 实战练习
 
 **练习 1：观察三分支。** 分别用空库、旧版库（无 alembic_version）、已版本化库启动 Gateway，看日志 "bootstrap: branch=empty/legacy/versioned -> ..."。确认三分支按状态分派。

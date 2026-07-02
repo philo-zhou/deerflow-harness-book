@@ -220,6 +220,67 @@ DeerFlow 的价值不在于它是"最好的 Agent 框架"，而在于它**开源
 
 ---
 
+## 实战示例：从 deerflow-harness 出发，3 步搭一个"带护栏 + 可观测"的自定义 Agent
+
+最后一章不是讲 deerflow 的某个模块，而是讲"怎么用前面 17 章学到的，搭你自己的 Harness"。我们走一个最小可用的实战。
+
+**场景**：你要搭一个公司内部的代码审查 Agent——能读代码、跑测试、给评审意见；但必须加护栏（只允许特定工具）和链路追踪（接 LangSmith/Langfuse）。
+
+**第 1 步：用 harness 包做底座。** `deerflow-harness` 是可发布的包（`deerflow.*`），自带第 2-9 章的全部能力。你的 Agent 不用从零写循环，直接用 `make_lead_agent` 的工厂模式 + `create_agent`，传入你的 model/tools/middleware/system_prompt。这就是第 1 章讲的 Harness/App 边界的价值——harness 是地基，你盖楼。
+
+**第 2 步：加护栏——AllowlistProvider。** 代码审查 Agent 只允许 `read_file`/`bash`/`ls`，不允许写文件（防误改代码）。用内置的 `AllowlistProvider`，零依赖：
+
+```python
+// backend/packages/harness/deerflow/guardrails/builtin.py:6-20
+class AllowlistProvider:
+    """Simple allowlist/denylist provider. No external dependencies."""
+    name = "allowlist"
+    def __init__(self, *, allowed_tools=None, denied_tools=None):
+        self._allowed = set(allowed_tools) if allowed_tools else None
+        self._denied = set(denied_tools) if denied_tools else set()
+    def evaluate(self, request: GuardrailRequest) -> GuardrailDecision:
+        if self._allowed is not None and request.tool_name not in self._allowed:
+            return GuardrailDecision(allow=False, reasons=[...])   # 不在白名单→拒绝
+        if request.tool_name in self._denied:
+            return GuardrailDecision(allow=False, reasons=[...])   # 在黑名单→拒绝
+        return GuardrailDecision(allow=True, reasons=[...])        # 放行
+```
+
+挂到 `GuardrailMiddleware`（第 4 章第 7 位），每次工具调用前授权。这是第 4、7 章护栏机制的真实落地——你也可以实现 `GuardrailProvider` Protocol（`provider.py:46`）接 OAP 策略，做更复杂的授权。
+
+**第 3 步：接链路追踪——build_tracing_callbacks。** 想看每次 Agent 调用的 trace（哪步调了什么工具、耗多少 token），挂 tracing：
+
+```python
+// backend/packages/harness/deerflow/tracing/factory.py:32-47
+def build_tracing_callbacks() -> list[Any]:
+    ...
+    # LangSmith 初始化失败会 raise
+    raise RuntimeError(f"LangSmith tracing initialization failed: {exc}") from exc
+```
+
+字段映射：LangGraph `thread_id` → LangSmith session、`get_effective_user_id()` → user_id（第 6 章）、agent_name → trace_name。子智能体的 trace 也归到父 session（第 10 章）。环境变量 `LANGSMITH_TRACING`/`LANGFUSE_TRACING` 开关。这样你的代码审查 Agent 全程可观测——出问题能回溯。
+
+```mermaid
+flowchart TD
+    base["deerflow-harness 包<br/>第2-9章能力"] --> factory["make_lead_agent 工厂模式"]
+    factory --> custom["你的代码审查 Agent"]
+    custom --> g["GuardrailMiddleware<br/>+ AllowlistProvider"]
+    custom --> t["tracing callbacks<br/>LangSmith/Langfuse"]
+    g -->|"只允许 read_file/bash/ls"| safe["防误改代码"]
+    t --> obs["全程可观测 trace"]
+
+    classDef base fill:#e8f4f8,stroke:#2196F3,stroke-width:2px,color:#1565C0
+    classDef you fill:#f3e8ff,stroke:#9333ea,stroke-width:2px,color:#6b21a8
+    classDef ext fill:#f0fdf4,stroke:#22c55e,stroke-width:2px,color:#166534
+    class base,factory base
+    class custom you
+    class g,t,safe,obs ext
+```
+
+**为什么这个例子重要？** 它把全书 17 章拧成"搭一个自定义 Harness"的实战。你看到：harness 包做底座（不用从零写循环）、`AllowlistProvider` 是最小护栏落地（第 4/7 章）、tracing 让 Agent 可观测（第 10 章子智能体 trace）。这正是飞书文档里作者说的——"地基打好了，上面盖什么楼，取决于你的想象力"。本书到此，你应该能：读懂 deerflow 每一行源码（Part 1-3）、理解运行时工程（Part 4）、并有能力构建自己的 Agent Harness。
+
+---
+
 ## 实战练习
 
 **练习 1：评估你的需求。** 列出你要构建的 Agent 应用的核心需求（沙箱？记忆？多入口？子智能体？）。对照 18.6 节决策"自建 vs 用 deerflow-harness"。
