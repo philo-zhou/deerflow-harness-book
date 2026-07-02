@@ -394,32 +394,44 @@ function resolveInternalLink(href) {
   return m ? m.id : null;
 }
 
-/* ---------- mermaid ---------- */
+/* ---------- mermaid ----------
+   关键:渲染前把原始 mermaid 源码存进 dataset.mmd。
+   因为 mermaid 渲染后会把 <svg> 注入节点,此时 textContent 是 SVG 文本,
+   不能再用它去重新 parse(会报 "Syntax error in text")。
+   切主题重渲染时必须从 dataset.mmd 还原原始源码。 ---------- */
 let mermaidIdx = 0;
 function renderMermaidIn(root) {
   const nodes = $$(".mermaid", root);
   if (!nodes.length || !window.mermaid) return;
+  const toRun = [];
   nodes.forEach((n) => {
-    if (n.dataset.rendered) return;
-    const id = "mmd-" + (mermaidIdx++);
-    n.id = id;
-    n.dataset.rendered = "1";
+    if (n.dataset.processed) return;          // mermaid 已渲染过,跳过
+    // 首次渲染:textContent 是干净的 mermaid 源码,存档备用
+    if (!n.dataset.mmd) n.dataset.mmd = n.textContent;
+    n.id = "mmd-" + (mermaidIdx++);
+    toRun.push(n);
   });
-  mermaid.run({ nodes }).catch((e) => {
-    console.warn("mermaid run error", e);
-  });
+  if (toRun.length) {
+    mermaid.run({ nodes: toRun }).catch((e) => {
+      console.warn("mermaid run error", e);
+    });
+  }
 }
 function rerenderMermaid() {
-  // 主题切换后:重置已渲染标记并重跑
+  // 主题切换后:从 dataset.mmd 还原原始源码,重画
   const root = $("#content");
-  $$(".mermaid", root).forEach((n) => {
+  const nodes = $$(".mermaid", root);
+  nodes.forEach((n) => {
+    if (!n.dataset.mmd) return;               // 没源码(不该发生),跳过
     n.removeAttribute("data-processed");
-    n.removeAttribute("data-rendered");
-    n.innerHTML = n.textContent; // 重置为原始文本(textContent 仍是源码)
+    n.textContent = n.dataset.mmd;            // 还原成原始 mermaid 文本
+    n.id = "mmd-" + (mermaidIdx++);           // 换 id 强制 mermaid 重新生成
   });
-  // mermaid 内部缓存了 id→graph,换 id 强制重画
-  $$(".mermaid", root).forEach((n) => { n.id = "mmd-" + (mermaidIdx++); });
-  mermaid.run({ nodes: $$(".mermaid", root) }).catch(() => {});
+  if (nodes.length) {
+    mermaid.run({ nodes }).catch((e) => {
+      console.warn("mermaid rerun error", e);
+    });
+  }
 }
 
 /* ---------- 大纲 + 滚动联动 ---------- */
