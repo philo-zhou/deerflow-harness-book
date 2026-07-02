@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>牧鹿 · 解码 DeerFlow Harness</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="refresh" content="0; url=site/" />
+  <link rel="canonical" href="site/" />
+  <style>
+    html, body { margin: 0; height: 100%; }
+    body {
+      display: flex; align-items: center; justify-content: center;
+      font-family: -apple-system, "PingFang SC", "Noto Sans SC", sans-serif;
+      background: #faf7f0; color: #2a2a25;
+    }
+    .box { text-align: center; }
+    .deer { font-size: 3rem; }
+    h1 { font-family: Georgia, "Songti SC", serif; font-weight: 800; }
+    a { color: #2f6b4f; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <div class="deer">🦌</div>
+    <h1>牧鹿</h1>
+    <p>正在进入学习课程…</p>
+    <p><a href="site/">若未自动跳转,点这里</a></p>
+  </div>
+  <script>
+    // 保险:history.replaceState 后跳转,避免留一层历史
+    location.replace("site/");
+  </script>
+</body>
+</html>

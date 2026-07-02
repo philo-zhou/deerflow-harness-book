@@ -2,9 +2,11 @@
 
 # 牧鹿：解码 DeerFlow Harness
 
-[![License](https://img.shields.io/badge/license-CC--BY--4.0-blue)](#license) [![Chapters](https://img.shields.io/badge/chapters-18%2B5%20appendices-green)](#目录) [![Diagrams](https://img.shields.io/badge/mermaid-32%20diagrams-9333ea)](#) [![Run Locally](https://img.shields.io/badge/run%20locally-python3%20serve.py-2f6b4f)](#本地运行)
+[![Website](https://img.shields.io/badge/在线访问-philo--zhou.github.io-2f6b4f?logo=github)](https://philo-zhou.github.io/deerflow-harness-book/site/) [![License](https://img.shields.io/badge/license-CC--BY--4.0-blue)](#license) [![Chapters](https://img.shields.io/badge/chapters-18%2B5%20appendices-green)](#目录) [![Diagrams](https://img.shields.io/badge/mermaid-32%20diagrams-9333ea)](#) [![Run Locally](https://img.shields.io/badge/run%20locally-python3%20serve.py-2f6b4f)](#本地运行)
 
-> 📖 在线课程站点:本地 `python3 serve.py` 后打开 http://localhost:8080/site/
+> 📖 **在线课程站点:[philo-zhou.github.io/deerflow-harness-book/site/](https://philo-zhou.github.io/deerflow-harness-book/site/)** —— 无需本地起服务,直接在浏览器学习。
+>
+> 💻 也可本地运行:`python3 serve.py` 后打开 http://localhost:8080/site/
 
 </div>
 
