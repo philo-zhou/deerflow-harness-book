@@ -2,7 +2,7 @@
 
 # 牧鹿：解码 DeerFlow Harness
 
-[![Website](https://img.shields.io/badge/在线访问-philo--zhou.github.io-2f6b4f?logo=github)](https://philo-zhou.github.io/deerflow-harness-book/site/) [![License](https://img.shields.io/badge/license-CC--BY--4.0-blue)](#license) [![Chapters](https://img.shields.io/badge/chapters-18%2B5%20appendices-green)](#目录) [![Diagrams](https://img.shields.io/badge/mermaid-32%20diagrams-9333ea)](#) [![Run Locally](https://img.shields.io/badge/run%20locally-python3%20serve.py-2f6b4f)](#本地运行)
+[![Website](https://img.shields.io/badge/在线访问-philo--zhou.github.io-2f6b4f?logo=github)](https://philo-zhou.github.io/deerflow-harness-book/site/) [![License](https://img.shields.io/badge/license-CC--BY--4.0-blue)](#license) [![Chapters](https://img.shields.io/badge/chapters-2%2B18%2B5-green)](#目录) [![Diagrams](https://img.shields.io/badge/mermaid-57%20diagrams-9333ea)](#) [![Run Locally](https://img.shields.io/badge/run%20locally-python3%20serve.py-2f6b4f)](#本地运行)
 
 > 📖 **在线课程站点:[philo-zhou.github.io/deerflow-harness-book/site/](https://philo-zhou.github.io/deerflow-harness-book/site/)** —— 无需本地起服务,直接在浏览器学习。
 >
@@ -56,6 +56,8 @@
 
 ## 快速导航
 
+> **零基础？** 先读 [Part 0 前置篇](第零部分-前置篇/LangChain基础-Agent的砖石.md)（LangChain + LangGraph 两章，认全 DeerFlow 调用的每个原语），再进正篇
+>
 > **时间紧张？** 00 → 01 → 02 → 04，拿到核心认知就够用
 >
 > **有经验？** 直接读 Part 2（中间件链是 DeerFlow 的心脏），遇到概念缺口回溯 Part 1
@@ -67,6 +69,15 @@
 ---
 
 ## 目录
+
+### Part 0. 前置篇 — 读懂调用的每个函数
+
+> 读正篇前先认全 DeerFlow 脚下的 LangChain / LangGraph 原语——让源码里每个 `create_agent`、`Command`、中间件钩子都有名有姓。每节配最小 demo + 仓库真实调用锚点。
+
+| # | 章节 | 核心内容 |
+|:-:|------|---------|
+| P1 | [LangChain 基础 — Agent 的砖石](第零部分-前置篇/LangChain基础-Agent的砖石.md) | 消息；模型；工具 `@tool`；RunnableConfig；回调 |
+| P2 | [LangGraph 基础 — Agent 的骨架](第零部分-前置篇/LangGraph基础-Agent的骨架.md) | `create_agent`；状态；中间件六钩子；检查点；流式 |
 
 ### Part 1. 基础篇 — 建立心智模型
 
@@ -178,6 +189,7 @@ python3 serve.py
 ```
 ├── README.md                 # 本书封面 + 导航(即本页)
 ├── 00-前言.md                # 牧鹿隐喻 · 三次浪潮 · harness 概念
+├── 第零部分-前置篇/          # LangChain + LangGraph 基础(P1/P2)
 ├── 第一部分-基础篇/          # 01–04 章
 ├── 第二部分-核心系统篇/      # 05–09 章
 ├── 第三部分-高级模式篇/      # 10–13 章

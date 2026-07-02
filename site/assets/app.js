@@ -6,6 +6,7 @@
 
 /* ---------- 课程目录(MANIFEST) ---------- */
 const PARTS = [
+  { id: "p0", name: "第零部分 · 前置篇", tag: "读懂调用的每个函数" },
   { id: "p1", name: "第一部分 · 基础篇", tag: "建立心智模型" },
   { id: "p2", name: "第二部分 · 核心系统篇", tag: "深入子系统" },
   { id: "p3", name: "第三部分 · 高级模式篇", tag: "组合与扩展" },
@@ -16,6 +17,10 @@ const PARTS = [
 const MANIFEST = [
   // 前言
   { id: "00", part: null, num: "前言", title: "前言", path: "00-前言.md", subtitle: "牧鹿隐喻 · 三次浪潮 · harness 概念" },
+
+  // Part 0 前置篇(读懂调用的每个函数;非数字 ID,不计入 18 章进度,但参与上下章导航)
+  { id: "P1", part: "p0", num: "P1", title: "LangChain 基础 — Agent 的砖石", path: "第零部分-前置篇/LangChain基础-Agent的砖石.md", subtitle: "消息;模型;工具;RunnableConfig;回调" },
+  { id: "P2", part: "p0", num: "P2", title: "LangGraph 基础 — Agent 的骨架", path: "第零部分-前置篇/LangGraph基础-Agent的骨架.md", subtitle: "create_agent;状态;中间件6钩子;检查点;流式" },
 
   // Part 1
   { id: "01", part: "p1", num: "01", title: "智能体编程的新范式", path: "第一部分-基础篇/01-智能体编程的新范式.md", subtitle: "Copilot→Agent 演进;Harness/App 分层;服务拓扑" },
@@ -508,7 +513,7 @@ function renderCover() {
     <div class="cover-stats">
       <div class="stat"><span class="num">18</span><span class="lbl">章节</span></div>
       <div class="stat"><span class="num">5</span><span class="lbl">附录</span></div>
-      <div class="stat"><span class="num">32</span><span class="lbl">架构图</span></div>
+      <div class="stat"><span class="num">57</span><span class="lbl">架构图</span></div>
       <div class="stat"><span class="num" id="coverProgress">${done} / ${CHAPTER_IDS.length}</span><span class="lbl">已学完</span></div>
     </div>
     <div class="cover-features">
