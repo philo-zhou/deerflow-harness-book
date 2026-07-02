@@ -468,6 +468,69 @@ flowchart LR
 4. **可操作的错误信息。** 模块缺失时翻译成正确的 `uv add` 命令，模块名↔包名映射消除用户困惑。
 5. **人写 YAML + 程序写 JSON 分工。** 主配置 YAML 给人，扩展配置 JSON 给 API 程序读写。
 
+## 实战示例：改一行 `config.yaml`，何时"立即生效"、何时"必须重启"
+
+配置系统最让人困惑的就是这个分界。我们用两个真实改动看清它。
+
+**场景 A（热重载）**：你在 `config.yaml` 把 `models[0].max_tokens` 从 4096 调到 8192，存盘。下一条消息立即按新值生成。
+
+**场景 B（启动锁）**：你把 `database` 的连接串改了，存盘。但下一条消息还走旧引擎——必须重启 Gateway 才生效。
+
+**第 1 步：配置从哪加载。** `get_app_config()`（`app_config.py:497`）是全局入口，首次调用走 `from_file`：
+
+```python
+// backend/packages/harness/deerflow/config/app_config.py:230-248（节选）
+@classmethod
+def from_file(cls, config_path: str | None = None) -> Self:
+    """Load config from YAML file."""
+    resolved_path = cls.resolve_config_path(config_path)
+    with open(resolved_path, encoding="utf-8") as f:
+        config_data = yaml.safe_load(f) or {}
+    cls._check_config_version(config_data, resolved_path)     # 版本校验
+    config_data = cls.resolve_env_variables(config_data)     # $VAR 解析
+    cls._apply_database_defaults(config_data)
+    ...
+```
+
+六步：定位路径 → 读 YAML → 版本检查 → 环境变量解析 → 数据库默认 → 构造 Pydantic 模型。之后每次 `get_app_config()` 都走模块级缓存。
+
+**第 2 步：热字段 vs 启动锁的判定。** 分界线在 `STARTUP_ONLY_FIELDS`（`reload_boundary.py`）——这张表列出"改了必须重启"的字段及原因：
+
+```python
+// backend/packages/harness/deerflow/config/reload_boundary.py（节选）
+STARTUP_ONLY_FIELDS: dict[str, str] = {
+    "database": "init_engine_from_config() runs once during startup; the SQLAlchemy engine holds the connection pool and is not rebuilt on config.yaml edits.",
+    "checkpointer": "make_checkpointer() ... bound at startup ...",
+    "sandbox": "get_sandbox_provider() caches the provider singleton ...",
+    "channels": "start_channel_service() builds IM clients at startup ...",
+    ...
+}
+```
+
+**为什么 `max_tokens` 是热的、`database` 是冷的？** 因为 `max_tokens` 只是模型调用时读的一个参数（每次 `create_chat_model` 都重新取），而 `database` 在启动时建好了 SQLAlchemy 引擎+连接池、`checkpointer` 绑定了 SQLite WAL、`sandbox` 缓存了 provider 单例——这些对象**已在内存里活着**，改 YAML 不会重建它们。这是第 14-16 章那些"启动时一次性建好"的子系统共同特征。
+
+```mermaid
+flowchart TD
+    edit["改 config.yaml"] --> reload["热重载检查"]
+    reload --> check{"字段在<br/>STARTUP_ONLY_FIELDS?"}
+    check -->|否 热字段<br/>max_tokens/title/...| hot["下条消息立即生效"]
+    check -->|是 启动锁<br/>database/sandbox/...| cold["标记需重启<br/>不重建已有对象"]
+    cold --> restart["重启 Gateway 后生效"]
+
+    classDef a fill:#f0fdf4,stroke:#22c55e,stroke-width:2px,color:#166534
+    classDef b fill:#fef2f2,stroke:#ef4444,stroke-width:2px,color:#991b1b
+    classDef c fill:#e8f4f8,stroke:#2196F3,stroke-width:2px,color:#1565C0
+    class hot a
+    class cold,restart b
+    class edit,reload,check c
+```
+
+**第 3 步：反射让配置"点名"组件。** `tools[]` 里 `use: "deerflow.sandbox.tools:bash_tool"` 这种字符串怎么变成工具对象？靠 `resolve_class`（`reflection/resolvers.py`）：拆 `module:attr` → import 模块 → 取属性 → 校验类型。这让"加一个工具 = 改一行 YAML"，不用动代码。
+
+**为什么这个例子重要？** 它把"配置系统"落到一次真实的 `config.yaml` 编辑上。你看到配置怎么六步加载、为什么有的字段热有的冷（取决于背后对象是否已在内存活着）、反射怎么让配置驱动组件。改 `max_tokens` 立即生效、改 `database` 要重启——这个分界直接影响你怎么安全地调参。第 15 章会讲数据库引擎的启动细节，第 16 章会讲 IM 渠道的启动锁。
+
+---
+
 ## 实战练习
 
 **练习 1：观察热重载。** 启动 `make dev`，发一条消息确认 Agent 正常。然后改 `config.yaml` 里某个热字段（如 `title.max_words`），再发一条消息，观察标题生成行为变化——无需重启。再改一个启动锁字段（如 `log_level`），确认它**不**立即生效，需重启。

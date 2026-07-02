@@ -280,6 +280,66 @@ flowchart LR
 5. **截断三道防线。** 工具内截断 → 跨工具预算中间件 → 历史摘要，层层兜底。
 6. **两阶段限流。** Token 预算/循环检测都用"软警告 + 硬停"两阶段——先提醒模型自我修正，无效再强制终止。
 
+## 实战示例：一个跑了 30 轮的长对话，怎么不撑爆上下文窗口
+
+上下文工程是 long-horizon Agent 的命门。我们看一个真实的长对话怎么被自动"瘦身"。
+
+**场景**：用户让 Agent 做"深度研究"——调研 5 个话题、各搜各的、写报告。跑了 30+ 轮，早期那些大段网页正文早把上下文塞满了。靠什么不崩？
+
+**第 1 步：每轮调模型前，SummarizationMiddleware 检查 token。** 它挂在 `before_model`，每次模型调用前看 `messages` 总 token 是否接近上限。`DeerFlowSummarizationMiddleware` 在 LangGraph 基础摘要上加了技能救援：
+
+```python
+// backend/packages/harness/deerflow/agents/middlewares/summarization_middleware.py:99-101
+class DeerFlowSummarizationMiddleware(SummarizationMiddleware):
+    """Summarization middleware with pre-compression hook dispatch and skill rescue."""
+
+    def __init__(self, *args, skills_container_path=None, skill_file_read_tool_names=None,
+                 before_summarization=None, preserve_recent_skill_count=5,
+                 preserve_recent_skill_tokens=25_000, preserve_recent_skill_tokens_per_skill=5_000, **kwargs):
+```
+
+"skill rescue"——压缩早期消息时，**保留最近读过的技能文件**（`preserve_recent_skill_count=5`），避免把 Agent 正在用的技能上下文也压没了。触发时它调一个专门的摘要 LLM（带 `TAG_NOSTREAM`，防止摘要过程被当成幽灵消息流给前端——注释里特意讲了这个坑）。
+
+**第 2 步：压缩后，早期大段网页正文变摘要。** 比如第 1-10 轮的网页正文 + 工具输出，被压成几句关键信息，最近 N 条消息原文保留。Agent 仍记得"调研了哪些话题"，但不再背着几十 KB 的原文。这就是为什么 Agent 跑几十轮仍"清醒"。
+
+**第 3 步：LoopDetectionMiddleware 拦住"鬼打墙"。** 万一 Agent 卡在某几个工具调用上反复跑（比如一直读不存在的文件），循环检测器介入。它用滑窗跟踪相同的工具调用集合：
+
+```python
+// backend/packages/harness/deerflow/agents/middlewares/loop_detection_middleware.py:174-194（节选）
+class LoopDetectionMiddleware(AgentMiddleware[AgentState]):
+    """Detects and breaks repetitive tool call loops."""
+    # warn_threshold: 相同工具调用集出现几次 → 注入警告。默认 3。
+    # hard_limit: 出现几次 → 直接剥离 tool_calls。默认 5。
+    # window_size: 滑窗大小。默认 20。
+    # tool_freq_warn: 同类型工具(不看参数)调用几次 → 警告。默认 30。
+    # tool_freq_hard_limit: 几次 → 强制停。默认 50。
+```
+
+两阶段：先软警告（3 次相同调用时注入一条提示，让模型自我修正），无效再硬停（5 次时直接剥掉 `tool_calls` 强制终止）。`tool_freq` 那条线专治"跨文件读循环"——哈希检测抓不到（参数不同），但同一工具类型调了 30 次就该提醒了。
+
+```mermaid
+flowchart TD
+    long["对话跑 30+ 轮<br/>早期大段网页正文"] --> sm{"每次 before_model<br/>SummarizationMiddleware<br/>token 接近上限?"}
+    sm -->|是| compress["压缩早期消息<br/>保留最近技能文件(skill rescue)"]
+    sm -->|否| cont["继续"]
+    compress --> cont
+    cont --> ld{"LoopDetection<br/>相同调用 ≥3 次?"}
+    ld -->|是 软警告| warn["注入提示让模型自修正"]
+    ld -->|≥5 次 硬停| hard["剥离 tool_calls<br/>强制终止"]
+    ld -->|否| run["正常推理"]
+
+    classDef c fill:#e8f4f8,stroke:#2196F3,stroke-width:2px,color:#1565C0
+    classDef dec fill:#fef9f0,stroke:#f59e0b,stroke-width:2px,color:#92400e
+    classDef bad fill:#fef2f2,stroke:#ef4444,stroke-width:2px,color:#991b1b
+    class long,compress,cont,run,warn c
+    class sm,ld dec
+    class hard bad
+```
+
+**为什么这个例子重要？** 它把"上下文管理"落到一个会撑爆窗口的真实长对话上。你看到：Summarization 在 `before_model` 压缩（带技能救援），LoopDetection 两阶段拦鬼打墙（3 警告 / 5 硬停 / 30 频率警告 / 50 频率硬停）。这些默认值是生产调出来的——既能让 Agent 跑深研究，又不让它失控烧 token。第 9 章会讲另一条防线：长期记忆，让压缩掉的上下文以"事实"形式长期留存。
+
+---
+
 ## 实战练习
 
 **练习 1：触发摘要。** 把 `config.yaml` 的 `summarization` 阈值调低（如 `messages` 触发类型设为 6 条），和 Agent 聊超过阈值轮次。观察 `RemoveMessage(REMOVE_ALL)` + summary 替换的发生，以及前端是否隐藏了 name 为 `summary` 的消息。

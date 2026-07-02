@@ -409,6 +409,74 @@ flowchart TD
 5. **Protocol 保持依赖方向。** 低层定义 `CurrentUser` Protocol，高层实现具体 `User`，低层不 import 高层。
 6. **按线程 + 按用户双层隔离。** `(user_id, thread_id)` 唯一定位状态，多租户根基。
 
+## 实战示例：两个用户同时各开一个线程，状态如何互不污染
+
+第 5 章讲的是"配置怎么加载"，这一章讲"Agent 跑的时候，状态存在哪、怎么隔离"。这是多租户 Agent 的根基。
+
+**场景**：用户 A 在线程 t1 让 Agent 写文件；用户 B 在线程 t2 让 Agent 跑 `bash`。两人在同一台服务器上并发，必须互不看到对方的东西。
+
+**第 1 步：状态 schema——ThreadState。** 每个线程一份 `ThreadState`，它不只是 `messages`，而是 Agent 的完整工作内存：
+
+```python
+// backend/packages/harness/deerflow/agents/thread_state.py:111-119
+class ThreadState(AgentState):
+    sandbox: SandboxStateField                                       # 沙箱 id
+    thread_data: NotRequired[ThreadDataState | None]                 # 工作目录路径
+    title: NotRequired[str | None]                                   # 会话标题
+    artifacts: Annotated[list[str], merge_artifacts]                 # 产出物(去重)
+    todos: Annotated[list | None, merge_todos]                       # 计划模式任务
+    uploaded_files: NotRequired[list[dict] | None]                   # 上传文件
+    viewed_images: Annotated[dict[str, ViewedImageData], merge_viewed_images]
+    promoted: Annotated[PromotedTools | None, merge_promoted]
+```
+
+注意 `Annotated[..., merge_artifacts]` 这种写法——`merge_artifacts` 是 **reducer**，定义并发更新同一字段时怎么合并（这里去重）。`messages` 继承自 `AgentState`，自带追加 reducer。
+
+**第 2 步：按 (user_id, thread_id) 定位。** 隔离的真相在这——`resolve_runtime_user_id` 是用户身份的"单一真相源"：
+
+```python
+// backend/packages/harness/deerflow/runtime/user_context.py:112-126（节选）
+def resolve_runtime_user_id(runtime: object | None) -> str:
+    """Single source of truth for a tool/middleware's effective user_id."""
+    context = getattr(runtime, "context", None)
+    if isinstance(context, dict):
+        ctx_user_id = context.get("user_id")
+        if ctx_user_id:
+            return str(ctx_user_id)        # ① runtime.context 优先
+    return get_effective_user_id()          # ② 退到 contextvar，再退默认
+```
+
+三级解析：runtime 上下文 > contextvar > 默认用户。每个工具/中间件拿到的 user_id 都走这同一个函数，不会各算各的。配合第 4 章沙箱的 `_thread_key = (user_id, thread_id)`，A/t1 和 B/t2 拿到完全不同的沙箱目录、不同的 `ThreadState`。
+
+**第 3 步：reducer 保证并发安全。** 假如 A 在 t1 里两个子智能体（第 10 章）同时往 `artifacts` 写文件，`merge_artifacts` 负责去重合并，不会互相覆盖：
+
+```python
+// backend/packages/harness/deerflow/agents/thread_state.py:45-53（节选）
+def merge_artifacts(existing: list[str] | None, new: list[str] | None) -> list[str]:
+    ...
+```
+
+这些 reducer 是 LangGraph 的 channel 机制——每个状态字段是一个"通道"，并发更新时按 reducer 合并，而不是 last-write-wins。
+
+```mermaid
+flowchart TD
+    a["用户 A · 线程 t1"] --> sa["ThreadState_A<br/>sandbox/t1, messages=[...A...]"]
+    b["用户 B · 线程 t2"] --> sb["ThreadState_B<br/>sandbox/t2, messages=[...B...]"]
+    sa -->|"artifacts 并发写"| red["merge_artifacts 去重"]
+    sb -->|"artifacts 并发写"| red2["merge_artifacts 去重"]
+    cp["checkpointer<br/>按 thread_id 存快照"] -.-> sa
+    cp -.-> sb
+
+    classDef u fill:#f3e8ff,stroke:#9333ea,stroke-width:2px,color:#6b21a8
+    classDef s fill:#e8f4f8,stroke:#2196F3,stroke-width:2px,color:#1565C0
+    class a,b u
+    class sa,sb,red,red2,cp s
+```
+
+**为什么这个例子重要？** 它把"状态与线程"落到并发多租户场景上。你看到：`ThreadState` 是 Agent 的工作内存（不只 messages），`(user_id, thread_id)` 是隔离键，reducer 让并发更新安全合并，checkpointer 按 thread_id 持久化（第 14 章）。A 改不到 B 的文件、看不到 B 的对话——全靠这套机制。第 10 章子智能体还会复用这个隔离键，但隔离上下文。
+
+---
+
 ## 实战练习
 
 **练习 1：复现沙箱 fail closed。** （较难）构造一个让同一线程出现两个不同 `sandbox_id` 的场景——比如手动往状态写一个伪造的 `sandbox_id`，再让工具获取真实沙箱。观察 `merge_sandbox` 抛 `ValueError`。这能直观感受"隔离 bug 信号 → fail closed"。

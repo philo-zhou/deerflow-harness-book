@@ -460,6 +460,101 @@ flowchart LR
 4. **纵深防御。** host-bash 双重防护、路径校验、虚拟路径翻译、输出屏蔽、输出截断——多道防线叠加，单点漏洞不致命。
 5. **惰性获取 + 跨轮次复用。** 默认延迟到首次工具调用才获取沙箱；同线程复用，不在每轮释放；关闭时统一清理。性能与资源占用的平衡。
 
+## 实战示例：`read_file('/mnt/user-data/uploads/sales.csv')` 背后发生了什么
+
+第 3 章模型决定调 `read_file` 读那个 CSV。现在钻进沙箱，看这行"看起来很普通"的路径调用怎么被安全地执行。
+
+**场景**：模型调用 `read_file('/mnt/user-data/uploads/sales.csv')`。但服务器上根本没有 `/mnt/user-data` 这个目录——它是 Agent 的**统一虚拟视角**，每个用户/线程的真实路径完全不同。
+
+**第 1 步：按 (user_id, thread_id) 拿到对的沙箱。** 工具注入的 `runtime` 带着当前线程上下文。`LocalSandboxProvider` 用一个二元组当沙箱键，保证多租户隔离：
+
+```python
+// backend/packages/harness/deerflow/sandbox/local/local_sandbox_provider.py:194-195
+@staticmethod
+def _thread_key(thread_id: str, user_id: str) -> tuple[str, str]:
+    return (user_id, thread_id)
+```
+
+注释（`local_sandbox_provider.py:41`）说每个线程的真实目录是 `{base_dir}/users/{user_id}/threads/{thread_id}/user-data/`。所以用户 A 的线程 1 和用户 B 的线程 2，虽然 Agent 都看 `/mnt/user-data/uploads`，物理上读的是完全不同的文件——这就是 per-thread + per-user 隔离。
+
+**第 2 步：虚拟路径翻译成物理路径。** `read_file` 工具调 `replace_virtual_path` 把 `/mnt/user-data/uploads/sales.csv` 翻成真实路径：
+
+```python
+// backend/packages/harness/deerflow/sandbox/tools.py:493-525（节选）
+def replace_virtual_path(path: str, thread_data: ThreadDataState | None) -> str:
+    """Replace virtual /mnt/user-data paths with actual thread data paths.
+        /mnt/user-data/workspace/* -> thread_data['workspace_path']/*
+        /mnt/user-data/uploads/*    -> thread_data['uploads_path']/*
+        /mnt/user-data/outputs/*    -> thread_data['outputs_path']/*
+    """
+    if thread_data is None:
+        return path
+    mappings = _thread_virtual_to_actual_mappings(thread_data)
+    ...
+    # Longest-prefix-first replacement with segment-boundary checks.
+    for virtual_base, actual_base in sorted(mappings.items(), key=lambda item: len(item[0]), reverse=True):
+        if path == virtual_base:
+            return actual_base
+        if path.startswith(f"{virtual_base}/"):
+            ...
+```
+
+注意"最长前缀优先 + 段边界检查"——这防止 `/mnt/user-data-x` 被误当成 `/mnt/user-data` 的子路径翻译（路径穿越防护）。`/mnt/user-data/uploads/sales.csv` 最终变成 `{base_dir}/users/{uid}/threads/{tid}/user-data/uploads/sales.csv`。
+
+**第 3 步：沙箱执行读操作。** 翻译后交给 `Sandbox` 抽象的 `read_file` 执行：
+
+```python
+// backend/packages/harness/deerflow/sandbox/sandbox.py:6-33（节选）
+class Sandbox(ABC):
+    """Abstract base class for sandbox environments"""
+    @abstractmethod
+    def execute_command(self, command: str) -> str: ...
+    @abstractmethod
+    def read_file(self, path: str) -> str: ...
+```
+
+`LocalSandbox` 是宿主机实现；`AioSandbox`（Docker，字节开源 AIO Sandbox）是容器实现。工具只依赖这个抽象契约——切 Local/Docker/K8s 只改配置，工具代码不动。
+
+**第 4 步：护栏在工具执行前授权。** 在真正执行 `read_file` 之前，`GuardrailMiddleware`（可选）先问 provider：这个调用允许吗？
+
+```python
+// backend/packages/harness/deerflow/guardrails/middleware.py:20-29（节选）
+class GuardrailMiddleware(AgentMiddleware[AgentState]):
+    """Evaluate tool calls against a GuardrailProvider before execution.
+    Denied calls return an error ToolMessage so the agent can adapt.
+    If the provider raises, behavior depends on fail_closed:
+      - True (default): block the call
+      - False: allow it through with a warning
+    """
+```
+
+它把工具调用包装成 `GuardrailRequest`（含 `tool_name`/`tool_input`/`user_id`/`thread_id`）交给 provider 判断。拒绝就返回一个错误 `ToolMessage` 让模型自己适应，而不是整个崩掉。沙箱管"工具能碰到什么文件"，Guardrail 管"这个调用能不能执行"——一个管执行环境，一个管执行许可，互补。
+
+```mermaid
+flowchart TD
+    req["模型调用<br/>read_file('/mnt/user-data/uploads/sales.csv')"]
+    key["按 (user_id, thread_id)<br/>拿到本线程沙箱"]
+    trans["replace_virtual_path<br/>虚拟→物理路径"]
+    gw{"GuardrailMiddleware<br/>授权检查"}
+    exec["Sandbox.read_file<br/>真实读文件"]
+    deny["拒绝→错误 ToolMessage"]
+
+    req --> key --> trans --> gw
+    gw -->|允许| exec
+    gw -->|拒绝| deny
+
+    classDef step fill:#e8f4f8,stroke:#2196F3,stroke-width:2px,color:#1565C0
+    classDef dec fill:#fef9f0,stroke:#f59e0b,stroke-width:2px,color:#92400e
+    classDef bad fill:#fef2f2,stroke:#ef4444,stroke-width:2px,color:#991b1b
+    class req,key,trans,exec step
+    class gw dec
+    class deny bad
+```
+
+**为什么这个例子重要？** 它把沙箱 + 权限的两层防线落在一个真实 `read_file` 上：先隔离到对的线程沙箱、再翻译虚拟路径、再过护栏授权、最后才执行。第 7 章会讲 `GuardrailMiddleware` 怎么作为 `wrap_tool_call` 挂进中间件链，第 18 章会把这套防线放进安全威胁模型。
+
+---
+
 ## 实战练习
 
 **练习 1：观察虚拟路径翻译。** 在 `bash_tool` 的 `replace_virtual_paths_in_command` 前后打印 `command`。让 Agent 跑 `ls /mnt/user-data/outputs`，观察这条虚拟路径命令被翻译成什么物理路径命令。再让 Agent 跑 `ls /mnt/user-data-x`（故意构造的非段边界前缀），确认它不被误翻译。

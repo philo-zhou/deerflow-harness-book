@@ -379,6 +379,74 @@ flowchart LR
 4. **宽容去重而非报错。** 同名工具按优先级去重 + warning，优先可用性。
 5. **触发器与逻辑分离。** `ask_clarification` 这种"需人介入"的工具只是触发器，有状态逻辑外移到中间件，保持工具无状态。
 
+## 实战示例：用户传一个 CSV，Agent 怎么"找到并调用"工具
+
+第 2 章的循环里，模型凭什么知道有 `read_file`、`bash` 可用？这一章就是"工具箱是怎么装配出来交给模型的"。
+
+**场景**：用户上传了 `sales.csv`，问 **"帮我算一下总销售额"**。Agent 需要能读文件、能跑命令——这些能力从哪来？
+
+**第 1 步：建图时装配工具。** `_make_lead_agent` 调 `get_available_tools(...)` 收集工具，传给 `create_agent(tools=...)`。装配是**配置驱动 + 条件扩展**的：
+
+```python
+// backend/packages/harness/deerflow/tools/tools.py:47-67（节选）
+builtin_tools = BUILTIN_TOOLS.copy()       # 默认只有 present_files / ask_clarification
+...
+if subagent_enabled:
+    builtin_tools.extend(SUBAGENT_TOOLS)    # 运行时开关 → 加 task 工具
+...
+if model_supports_vision:
+    builtin_tools.append(view_image_tool)  # 模型能力 → 加视觉工具
+```
+
+**第 2 步：沙箱工具经 config 反射加载。** `bash`/`read_file` 等不是硬编码进 `BUILTIN_TOOLS`，而是 `config.yaml` 里 `use: "deerflow.sandbox.tools:bash_tool"` 声明、反射加载的。每个沙箱工具用 `@tool` 装饰器声明，docstring 会变成给模型的工具说明：
+
+```python
+// backend/packages/harness/deerflow/sandbox/tools.py:1388-1391
+@tool("bash", parse_docstring=True)
+def bash_tool(runtime: Runtime, description: str, command: str) -> str:
+    """Execute a bash command in a Linux environment.
+    ...
+    - Use `python` to run Python code.
+    """
+```
+
+注意 `description` 参数——工具要求模型"先用一句话解释为什么调这个命令"，这是给模型加结构化约束（也是审计线索）。`runtime` 参数是 DeerFlow 注入的运行时上下文，模型看不到它（第 4 章讲它怎么带沙箱/线程数据进来）。
+
+**第 3 步：装配去重。** 配置、内置、MCP、ACP 可能同名（issue #1803 的坑）。装配时按 `config > builtins > MCP > ACP` 优先级去重，并 warning：
+
+```python
+// backend/packages/harness/deerflow/tools/tools.py:32-35（注释节选）
+# Warn when the config ``name`` field and the tool object's ``.name``
+# attribute diverge — this is the root cause of issue #1803 where
+# the LLM receives one name in its tool schema but the runtime router
+# recognises a different name, producing "not a valid tool" errors.
+```
+
+这保证模型 schema 里看到的工具名和运行时路由认的名字一致——否则会出现"模型调 bash，但路由说没这个工具"的诡异 bug。
+
+**第 4 步：模型在循环里挑工具。** 工具装配好后，它们的 schema 进了模型上下文。回到第 2 章的循环：模型看到 `sales.csv` 这个上传文件 + "算总销售额"，决定调 `read_file('/mnt/user-data/uploads/sales.csv')`，读出来后调 `bash` 跑一段 Python 求和。每一步工具调用的 schema、docstring 都是这一步装配进去的。
+
+```mermaid
+flowchart LR
+    cfg["config.yaml<br/>use: sandbox.tools:bash"] --> reflect["反射加载"]
+    builtin["BUILTIN_TOOLS<br/>present_files 等"] --> assemble["get_available_tools"]
+    cond["条件: 视觉/子智能体"] --> assemble
+    reflect --> assemble
+    assemble -->|"去重+warning"| schema["工具 schema 进模型上下文"]
+    schema --> model["模型决策: 调 read_file/bash"]
+
+    classDef src fill:#f3e8ff,stroke:#9333ea,stroke-width:2px,color:#6b21a8
+    classDef core fill:#e8f4f8,stroke:#2196F3,stroke-width:2px,color:#1565C0
+    classDef out fill:#f0fdf4,stroke:#22c55e,stroke-width:2px,color:#166534
+    class cfg,builtin,cond src
+    class assemble,reflect,schema core
+    class model out
+```
+
+**为什么这个例子重要？** 它把"工具系统"落到一个真实操作（算 CSV 销售额）上。你看到工具从哪三个来源来（内置/沙箱反射/条件扩展）、怎么去重、怎么变成模型能调的 schema。第 4 章会继续这条链：当模型真的调 `read_file('/mnt/user-data/uploads/sales.csv')` 时，这个虚拟路径怎么被翻译成真实物理路径。
+
+---
+
 ## 实战练习
 
 **练习 1：追踪一次工具装配。** 在 `get_available_tools` 末尾的 `logger.info(f"Total tools loaded: ...")`（tools.py:159）处观察一次建图加载了多少工具。分别用 `subagent_enabled=True/False`、`model_name` 指向支持/不支持视觉的模型，观察工具数量的变化。

@@ -308,6 +308,79 @@ def create_memory_fact(
 7. **token 计数容错。** tiktoken 惰性 + 冷却 + 自愈 + 字符回退，应对网络受限环境的 BPE 下载阻塞。
 8. **原子写 + 缓存失效。** 临时文件 + rename 避免写一半损坏；写后失效缓存，保证下次读最新。
 
+## 实战示例：你说"我用 Python"，下一条对话 Agent 怎么"记住"了
+
+记忆系统让 Agent 跨会话不失忆。我们追踪一句随口的话怎么变成持久记忆，又怎么在下一次对话冒出来。
+
+**场景**：你在第一条对话里说 **"我平时用 Python 写后端"**。结束对话。过几天开新对话问 **"帮我写个排序算法"**——Agent 竟然直接用 Python 写了。它怎么记住的？
+
+**第 1 步：after_agent 触发，进队列。** 每次对话结束（`aafter_agent` 钩子），`MemoryMiddleware` 把这次对话的上下文塞进 `MemoryUpdateQueue`。它不阻塞对话——直接 enqueue 就返回，对话响应用户不受影响：
+
+```python
+// backend/packages/harness/deerflow/agents/memory/queue.py:28-40
+class MemoryUpdateQueue:
+    """Queue for memory updates with debounce mechanism.
+    This queue collects conversation contexts and processes them after
+    a configurable debounce period. Multiple conversations received within
+    the debounce window are batched together.
+    """
+    def __init__(self):
+        self._queue: list[ConversationContext] = []
+        self._lock = threading.Lock()
+        self._timer: threading.Timer | None = None
+        self._processing = False
+```
+
+**第 2 步：防抖 + 批处理。** 你连发了几条消息，每条结束都触发入队。但队列有防抖定时器（`debounce_seconds`）——窗口内的多次入队会被合并成一次处理，避免每句话都调一次 LLM 抽取（昂贵）。窗口到了才真正处理。
+
+**第 3 步：MemoryUpdater 用 LLM 抽取事实。** 处理时，`MemoryUpdater`（`updater.py:375`）把对话喂给 LLM，配上 `MEMORY_UPDATE_PROMPT`（`prompt.py:22`）让它分析："这段对话里哪些是该记的 fact？" LLM 产出结构化事实。`create_memory_fact` 落地每条 fact：
+
+```python
+// backend/packages/harness/deerflow/agents/memory/updater.py:88-110（节选）
+def create_memory_fact(content, category="context", confidence=0.5, agent_name=None, *, user_id=None):
+    """Create a new fact and persist the updated memory data."""
+    normalized_content = content.strip()
+    normalized_category = category.strip() or "context"
+    validated_confidence = _validate_confidence(confidence)        # 0–1 校验
+    ...
+    facts.append({
+        "id": f"fact_{uuid.uuid4().hex[:8]}",       # uuid 截断防并发冲突
+        "content": normalized_content,                # "用户平时用 Python 写后端"
+        "category": normalized_category,              # preference / knowledge / ...
+        "confidence": validated_confidence,
+        ...
+    })
+```
+
+于是"我用 Python 写后端"变成一条 `category=preference`、带置信度的 fact。注意 `category` 是**自由字符串**（默认 `context`），`prompt.py` 给 LLM 列了 `preference|knowledge|context|behavior|goal|correction` 六类当提示，但代码不强制枚举。
+
+**第 4 步：按用户存储 + 原子写。** fact 存进 `{base_dir}/users/{user_id}/memory.json`（`FileMemoryStorage`，`storage.py:62`）。按 user_id 隔离——你的记忆不会混进别人的。写入用临时文件 + rename（原子写），避免写到一半断电损坏；写后失效缓存，下次读最新。
+
+**第 5 步：下次对话注入。** 几天后你开新对话。`DynamicContextMiddleware`（第 7 章第 11 位，`before_agent`）在首条 HumanMessage 里注入你的记忆：用户画像 + 时间线 + 事实库。模型看到"用户偏好 Python 后端"，于是写排序算法时直接用 Python。这就是"用得越多越懂你"的机制闭环。
+
+```mermaid
+flowchart TD
+    say["你说: 我用 Python"] --> end_run["对话结束<br/>after_agent"]
+    end_run --> q["MemoryUpdateQueue 入队<br/>不阻塞响应"]
+    q --> debounce["防抖窗口<br/>合并多次入队"]
+    debounce --> updater["MemoryUpdater<br/>LLM 抽取 fact"]
+    updater --> fact["fact: 偏好Python后端<br/>category=preference"]
+    fact --> store["users/{uid}/memory.json<br/>原子写"]
+    store -.->|"几天后新对话"| inject["DynamicContextMiddleware<br/>注入记忆"]
+    inject --> model["模型: 直接用Python写"]
+
+    classDef run fill:#e8f4f8,stroke:#2196F3,stroke-width:2px,color:#1565C0
+    classDef mem fill:#f3e8ff,stroke:#9333ea,stroke-width:2px,color:#6b21a8
+    classDef later fill:#fef9f0,stroke:#f59e0b,stroke-width:2px,color:#92400e
+    class say,end_run,q,debounce run
+    class updater,fact,store mem
+    class inject,model later
+```
+
+**为什么这个例子重要？** 它把"记忆系统"落到一句真实的话上，走完从"说出口"到"下次自动用上"的完整闭环：after_agent 入队 → 防抖批处理 → LLM 抽取 fact → 按用户原子存储 → 下次注入。每一步都有理由：队列+防抖是为了不阻塞对话、不浪费 LLM；按 user_id 存是隔离；原子写是防损坏。第 6 章讲的 `(user_id, thread_id)` 隔离在这里延续——记忆按 user_id（比 thread 更粗）长期留存。第 8 章的 summarization 压缩掉的上下文，正是靠记忆系统以 fact 形式"抢救"下来。
+
+---
+
 ## 实战练习
 
 **练习 1：观察防抖。** 连续和 Agent 聊几轮（间隔小于 30s），观察记忆更新只在你停下 30s 后发生一次（看日志 "Processing N queued memory updates"）。再快速发一条，确认它进了下一批而非立即处理。
