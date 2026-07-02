@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>牧鹿 · 解码 DeerFlow Harness — 学习课程</title>
+  <meta name="description" content="一本带源码的 Agent 运行时架构深度剖析。把字节开源的 DeerFlow 一行行读给你看。" />
+  <meta name="color-scheme" content="light dark" />
+
+  <!-- highlight.js 主题(随主题切换) -->
+  <link id="hlTheme" rel="stylesheet" href="assets/vendor/highlight-github.min.css" />
+  <!-- 设计系统 -->
+  <link rel="stylesheet" href="assets/style.css" />
+
+  <!-- vendored 库(本地,可离线) -->
+  <script src="assets/vendor/marked.min.js"></script>
+  <script src="assets/vendor/highlight.min.js"></script>
+  <script src="assets/vendor/mermaid.min.js"></script>
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <button class="icon-btn" id="menuToggle" aria-label="目录" title="目录">☰</button>
+      <a class="brand" href="#/" title="返回封面">🦌 <span class="brand-text">牧鹿</span></a>
+      <span class="topbar-title" id="topbarTitle">学习课程</span>
+      <span class="topbar-spacer"></span>
+      <button class="icon-btn" id="fontDec" title="缩小字号" aria-label="缩小字号">A−</button>
+      <button class="icon-btn" id="fontInc" title="放大字号" aria-label="放大字号">A+</button>
+      <button class="icon-btn" id="themeToggle" title="切换深色/浅色" aria-label="切换主题">🌙</button>
+    </header>
+    <div class="progress-bar" aria-hidden="true"><div id="readProgress"></div></div>
+
+    <div class="layout">
+      <aside class="sidebar" id="sidebar" aria-label="课程目录">
+        <div class="sidebar-inner">
+          <div class="sidebar-head">
+            <span class="sidebar-progress" id="sidebarProgress">0 / 18</span>
+            <button class="link-btn" id="collapseAll" title="展开/收起全部">收起</button>
+          </div>
+          <nav id="sidebarNav"></nav>
+        </div>
+      </aside>
+      <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+
+      <main class="content" id="content" tabindex="-1">
+        <div class="loading">加载中…</div>
+      </main>
+
+      <aside class="outline" id="outline" aria-label="本页大纲"></aside>
+    </div>
+  </div>
+
+  <script src="assets/app.js"></script>
+</body>
+</html>
