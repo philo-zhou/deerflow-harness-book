@@ -23,6 +23,7 @@ const MANIFEST = [
   { id: "P2", part: "p0", num: "P2", title: "LangGraph 基础 — Agent 的骨架", path: "第零部分-前置篇/LangGraph基础-Agent的骨架.md", subtitle: "create_agent;状态;中间件6钩子;检查点;流式" },
   { id: "P3", part: "p0", num: "P3", title: "能力注入与运行模式 — 一图看懂全流程", path: "第零部分-前置篇/能力注入与运行模式.md", subtitle: "能力注入全景;4模式(闪速/思考/PRO/Ultra)链路" },
   { id: "P4", part: "p0", num: "P4", title: "函数调用管线总览 — 从入口到出口的真实调用链", path: "第零部分-前置篇/函数调用管线总览.md", subtitle: "装配/执行/六钩子/子智能体/流式 五条真实调用链" },
+  { id: "P5", part: "p0", num: "P5", title: "整体管线 — 一条消息的完整旅程", path: "第零部分-前置篇/整体管线-一条消息的完整旅程.md", subtitle: "HTTP→start_run→装配→astream→StreamBridge→SSE 端到端一条链" },
 
   // Part 1
   { id: "01", part: "p1", num: "01", title: "智能体编程的新范式", path: "第一部分-基础篇/01-智能体编程的新范式.md", subtitle: "Copilot→Agent 演进;Harness/App 分层;服务拓扑" },
@@ -515,7 +516,7 @@ function renderCover() {
     <div class="cover-stats">
       <div class="stat"><span class="num">18</span><span class="lbl">章节</span></div>
       <div class="stat"><span class="num">5</span><span class="lbl">附录</span></div>
-      <div class="stat"><span class="num">62</span><span class="lbl">架构图</span></div>
+      <div class="stat"><span class="num">72</span><span class="lbl">架构图</span></div>
       <div class="stat"><span class="num" id="coverProgress">${done} / ${CHAPTER_IDS.length}</span><span class="lbl">已学完</span></div>
     </div>
     <div class="cover-features">

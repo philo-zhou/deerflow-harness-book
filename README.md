@@ -2,7 +2,7 @@
 
 # 牧鹿：解码 DeerFlow Harness
 
-[![Website](https://img.shields.io/badge/在线访问-philo--zhou.github.io-2f6b4f?logo=github)](https://philo-zhou.github.io/deerflow-harness-book/site/) [![License](https://img.shields.io/badge/license-CC--BY--4.0-blue)](#license) [![Chapters](https://img.shields.io/badge/chapters-4%2B18%2B5-green)](#目录) [![Diagrams](https://img.shields.io/badge/mermaid-62%20diagrams-9333ea)](#) [![Run Locally](https://img.shields.io/badge/run%20locally-python3%20serve.py-2f6b4f)](#本地运行)
+[![Website](https://img.shields.io/badge/在线访问-philo--zhou.github.io-2f6b4f?logo=github)](https://philo-zhou.github.io/deerflow-harness-book/site/) [![License](https://img.shields.io/badge/license-CC--BY--4.0-blue)](#license) [![Chapters](https://img.shields.io/badge/chapters-5%2B18%2B5-green)](#目录) [![Diagrams](https://img.shields.io/badge/mermaid-72%20diagrams-9333ea)](#) [![Run Locally](https://img.shields.io/badge/run%20locally-python3%20serve.py-2f6b4f)](#本地运行)
 
 > 📖 **在线课程站点:[philo-zhou.github.io/deerflow-harness-book/site/](https://philo-zhou.github.io/deerflow-harness-book/site/)** —— 无需本地起服务,直接在浏览器学习。
 >
@@ -56,7 +56,7 @@
 
 ## 快速导航
 
-> **零基础？** 先读 [Part 0 前置篇](第零部分-前置篇/LangChain基础-Agent的砖石.md)（LangChain + LangGraph 基础、能力注入与运行模式、函数调用管线总览，认全 DeerFlow 调用的每个原语与管线），再进正篇
+> **零基础？** 先读 [Part 0 前置篇](第零部分-前置篇/LangChain基础-Agent的砖石.md)（LangChain + LangGraph 基础、能力注入与运行模式、函数调用管线总览、整体管线，认全 DeerFlow 调用的每个原语与管线），再进正篇
 >
 > **时间紧张？** 00 → 01 → 02 → 04，拿到核心认知就够用
 >
@@ -80,6 +80,7 @@
 | P2 | [LangGraph 基础 — Agent 的骨架](第零部分-前置篇/LangGraph基础-Agent的骨架.md) | `create_agent`；状态；中间件六钩子；检查点；流式 |
 | P3 | [能力注入与运行模式 — 一图看懂全流程](第零部分-前置篇/能力注入与运行模式.md) | 能力注入全景(装配时/运行时)；4 模式(闪速/思考/PRO/Ultra)链路 |
 | P4 | [函数调用管线总览 — 从入口到出口的真实调用链](第零部分-前置篇/函数调用管线总览.md) | 装配/单轮执行/中间件六钩子/子智能体委派/流式 五条真实调用链 |
+| P5 | [整体管线 — 一条消息的完整旅程](第零部分-前置篇/整体管线-一条消息的完整旅程.md) | HTTP→start_run→装配→astream→StreamBridge→SSE 端到端七驿站 |
 
 ### Part 1. 基础篇 — 建立心智模型
 
@@ -191,7 +192,7 @@ python3 serve.py
 ```
 ├── README.md                 # 本书封面 + 导航(即本页)
 ├── 00-前言.md                # 牧鹿隐喻 · 三次浪潮 · harness 概念
-├── 第零部分-前置篇/          # LangChain/LangGraph 基础 + 能力注入/运行模式 + 函数调用管线(P1–P4)
+├── 第零部分-前置篇/          # LangChain/LangGraph 基础 + 能力注入/运行模式 + 函数调用管线 + 整体管线(P1–P5)
 ├── 第一部分-基础篇/          # 01–04 章
 ├── 第二部分-核心系统篇/      # 05–09 章
 ├── 第三部分-高级模式篇/      # 10–13 章
