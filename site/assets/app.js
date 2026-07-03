@@ -585,6 +585,223 @@ function closeSidebarMobile() {
   $("#sidebarBackdrop").classList.remove("show");
 }
 
+/* ---------- 搜索(全文 + 标题,懒加载索引) ---------- */
+const searchState = {
+  indexed: false,
+  indexing: false,
+  index: [],          // [{id, num, title, subtitle, partName, textPlain, textLower}]
+  lastResults: [],
+  activeIdx: 0,
+};
+
+function buildSearchModal() {
+  if ($("#searchModal")) return;
+  const el = document.createElement("div");
+  el.id = "searchModal";
+  el.className = "search-overlay";
+  el.setAttribute("role", "dialog");
+  el.setAttribute("aria-modal", "true");
+  el.setAttribute("aria-label", "搜索章节");
+  el.innerHTML = `
+    <div class="search-modal" role="document">
+      <div class="search-box">
+        <span class="search-ico">🔍</span>
+        <input id="searchInput" class="search-input" type="search"
+          placeholder="搜索标题、正文、源码片段…(Ctrl+K)" autocomplete="off" spellcheck="false" />
+        <kbd class="search-kbd">Esc</kbd>
+      </div>
+      <div id="searchResults" class="search-results"></div>
+    </div>`;
+  document.body.appendChild(el);
+
+  const input = $("#searchInput", el);
+  input.addEventListener("input", () => scheduleSearch(input.value));
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { closeSearch(); e.preventDefault(); }
+    else if (e.key === "Enter") {
+      const res = searchState.lastResults[searchState.activeIdx];
+      if (res) { gotoResult(res); e.preventDefault(); }
+    } else if (e.key === "ArrowDown") { moveSel(1); e.preventDefault(); }
+    else if (e.key === "ArrowUp") { moveSel(-1); e.preventDefault(); }
+  });
+  // 点击遮罩空白处关闭
+  el.addEventListener("mousedown", (e) => { if (e.target === el) closeSearch(); });
+}
+
+function openSearch() {
+  buildSearchModal();
+  const el = $("#searchModal");
+  if (el.classList.contains("open")) { $("#searchInput").focus(); return; }
+  el.classList.add("open");
+  document.body.classList.add("search-open");
+  const input = $("#searchInput");
+  input.value = "";
+  searchState.lastResults = [];
+  searchState.activeIdx = 0;
+  renderSearchResults({ state: "empty" });
+  // 懒建索引:首次打开时拉取所有章节
+  ensureIndex().then(() => runSearch(input.value));
+  setTimeout(() => input.focus(), 0);
+}
+function closeSearch() {
+  const el = $("#searchModal");
+  if (!el) return;
+  el.classList.remove("open");
+  document.body.classList.remove("search-open");
+}
+
+let searchTimer = null;
+function scheduleSearch(q) {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => runSearch(q), 140);
+}
+
+async function ensureIndex() {
+  if (searchState.indexed || searchState.indexing) return;
+  searchState.indexing = true;
+  await Promise.all(MANIFEST.map(async (m) => {
+    if (state.mdCache.has(m.id)) return;
+    try {
+      const res = await fetch(encodePath(m.path));
+      if (res.ok) state.mdCache.set(m.id, await res.text());
+    } catch {}
+  }));
+  searchState.index = MANIFEST.map((m) => {
+    const textPlain = stripMdForSearch(state.mdCache.get(m.id) || "");
+    return {
+      id: m.id, num: m.num, title: m.title,
+      subtitle: m.subtitle || "", partName: partName(m.part),
+      textPlain, textLower: textPlain.toLowerCase(),
+    };
+  });
+  searchState.indexed = true;
+  searchState.indexing = false;
+}
+
+function stripMdForSearch(md) {
+  let s = md;
+  s = s.replace(/^#\s+.+\n/, "");                 // 去掉首个 H1(标题已单独展示)
+  s = s.replace(/```mermaid\n[\s\S]*?```/g, " ");  // 去图源(含保留字噪声,搜索意义小)
+  s = s.replace(/```[^\n]*\n/g, " ");              // 去代码围栏标记行,保留代码内容(函数名值得搜)
+  s = s.replace(/```/g, " ");                       // 去残余围栏
+  s = s.replace(/\s+/g, " ").trim();
+  return s;
+}
+
+function runSearch(q) {
+  if (!searchState.indexed) {
+    searchState.lastResults = [];
+    searchState.activeIdx = 0;
+    renderSearchResults({ state: "indexing" });
+    return;   // 索引就绪后 openSearch 的 ensureIndex().then 会再触发 runSearch
+  }
+  const out = computeSearch(q);
+  searchState.lastResults = out.results || [];
+  searchState.activeIdx = 0;
+  renderSearchResults(out);
+}
+
+function computeSearch(query) {
+  const q = query.trim().toLowerCase();
+  if (!q) return { state: "empty" };
+  const terms = q.split(/\s+/);
+  const results = [];
+  for (const ch of searchState.index) {
+    const titleL = ch.title.toLowerCase();
+    const subL = ch.subtitle.toLowerCase();
+    const hay = titleL + " " + subL + " " + ch.textLower;
+    if (!terms.every((t) => hay.includes(t))) continue;   // 多词:全部命中才算匹配
+    const titleHit = terms.some((t) => titleL.includes(t));
+    const subHit = terms.some((t) => subL.includes(t));
+    let bodyPos = -1, matchedLen = 0;
+    for (const t of terms) {
+      const p = ch.textLower.indexOf(t);
+      if (p >= 0 && (bodyPos < 0 || p < bodyPos)) { bodyPos = p; matchedLen = t.length; }
+    }
+    let score = 0;
+    if (titleHit) score += 1000;
+    if (subHit) score += 400;
+    if (bodyPos >= 0) score += Math.max(50, 300 - Math.min(bodyPos, 300));
+    let snippet = "";
+    if (bodyPos >= 0) snippet = makeSnippet(ch.textPlain, bodyPos, matchedLen);
+    else if (subHit) snippet = esc(ch.subtitle);
+    results.push({ id: ch.id, num: ch.num, title: ch.title, partName: ch.partName, titleHit, snippet, score });
+  }
+  results.sort((a, b) => b.score - a.score);
+  return { state: results.length ? "ok" : "none", results };
+}
+
+function makeSnippet(textPlain, pos, len) {
+  const start = Math.max(0, pos - 36);
+  const end = Math.min(textPlain.length, pos + len + 64);
+  const pre = start > 0 ? "…" : "";
+  const post = end < textPlain.length ? "…" : "";
+  // 清掉 markdown 噪声(标题 #、表格 |、引用 >、强调 *、代码 `),match 段保持原样
+  const clean = (s) => esc(s)
+    .replace(/&gt;/g, "").replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/[`*#|>]/g, "").replace(/\s{2,}/g, " ");
+  const before = clean(textPlain.slice(start, pos));
+  const match = esc(textPlain.slice(pos, pos + len));
+  const after = clean(textPlain.slice(pos + len, end));
+  return pre + before + "<mark>" + match + "</mark>" + after + post;
+}
+
+function renderSearchResults(out) {
+  const box = $("#searchResults");
+  if (!box) return;
+  let html = "";
+  if (out.state === "indexing") {
+    html = `<div class="search-empty">⏳ 正在建立全文索引…</div>`;
+  } else if (out.state === "empty") {
+    html = `<div class="search-hint">输入关键词,在全 ${MANIFEST.length} 篇中搜索标题、正文与源码片段。</div>`;
+  } else if (out.state === "none") {
+    html = `<div class="search-empty">没有匹配的章节 🦌</div>`;
+  } else {
+    html = out.results.map((r, i) => `
+      <a class="search-result${i === searchState.activeIdx ? " active" : ""}" data-idx="${i}">
+        <span class="sr-num">${esc(r.num)}</span>
+        <span class="sr-main">
+          <span class="sr-title">${esc(r.title)}${r.titleHit ? `<span class="sr-tag">标题</span>` : ""}</span>
+          <span class="sr-snippet">${r.snippet || `<span class="sr-sub">${esc(r.partName)}</span>`}</span>
+        </span>
+      </a>`).join("");
+  }
+  box.innerHTML = html;
+  $$(".search-result", box).forEach((a) => {
+    a.addEventListener("click", () => {
+      const res = searchState.lastResults[parseInt(a.dataset.idx, 10)];
+      if (res) gotoResult(res);
+    });
+    a.addEventListener("mouseenter", () => {
+      searchState.activeIdx = parseInt(a.dataset.idx, 10);
+      updateSel();
+    });
+  });
+}
+
+function updateSel() {
+  $$("#searchResults .search-result").forEach((a, i) => {
+    a.classList.toggle("active", i === searchState.activeIdx);
+  });
+}
+function moveSel(delta) {
+  const n = searchState.lastResults.length;
+  if (!n) return;
+  searchState.activeIdx = (searchState.activeIdx + delta + n) % n;
+  updateSel();
+  const el = $$("#searchResults .search-result")[searchState.activeIdx];
+  if (el) el.scrollIntoView({ block: "nearest" });
+}
+function gotoResult(res) {
+  closeSearch();
+  location.hash = "#/" + res.id;
+}
+function isTypingTarget(t) {
+  if (!t) return false;
+  const tag = (t.tagName || "").toLowerCase();
+  return tag === "input" || tag === "textarea" || tag === "select" || t.isContentEditable;
+}
+
 /* ---------- 初始化 ---------- */
 function init() {
   // 主题
@@ -606,6 +823,18 @@ function init() {
     $("#sidebar").classList.contains("open") ? closeSidebarMobile() : openSidebarMobile();
   });
   $("#sidebarBackdrop").addEventListener("click", closeSidebarMobile);
+  // 搜索
+  $("#searchBtn").addEventListener("click", openSearch);
+  window.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) {
+      e.preventDefault();
+      const m = $("#searchModal");
+      if (m && m.classList.contains("open")) closeSearch(); else openSearch();
+    } else if (e.key === "/" && !isTypingTarget(e.target)) {
+      e.preventDefault();
+      openSearch();
+    }
+  });
   // 滚动
   window.addEventListener("scroll", onScroll, { passive: true });
   // 路由
