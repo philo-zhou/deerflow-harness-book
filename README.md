@@ -10,6 +10,8 @@
 
 </div>
 
+> 📌 **源码基线**:本书基于 [deer-flow](https://github.com/bytedance/deer-flow) 仓库 commit [`7a6c4a99`](https://github.com/bytedance/deer-flow/commit/7a6c4a994a86583d2a3c056ee9d0f157d4f030c2)(2026-06-26)的源码分析编写。全书 `文件:行号` 锚点均对应该 commit;后续代码演进后,对照此 commit `git diff 7a6c4a99 HEAD -- <文件>` 定位变更、回填教程。
+
 ---
 
 <div align="center">
