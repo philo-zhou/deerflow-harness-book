@@ -78,6 +78,7 @@
 |:-:|------|---------|
 | P1 | [LangChain 基础 — Agent 的砖石](第零部分-前置篇/LangChain基础-Agent的砖石.md) | 消息；模型；工具 `@tool`；RunnableConfig；回调 |
 | P2 | [LangGraph 基础 — Agent 的骨架](第零部分-前置篇/LangGraph基础-Agent的骨架.md) | `create_agent`；状态；中间件六钩子；检查点；流式 |
+| P3 | [能力注入与运行模式 — 一图看懂全流程](第零部分-前置篇/能力注入与运行模式.md) | 能力注入全景(装配时/运行时)；4 模式(闪速/思考/PRO/Ultra)链路 |
 
 ### Part 1. 基础篇 — 建立心智模型
 

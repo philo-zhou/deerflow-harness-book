@@ -21,6 +21,7 @@ const MANIFEST = [
   // Part 0 前置篇(读懂调用的每个函数;非数字 ID,不计入 18 章进度,但参与上下章导航)
   { id: "P1", part: "p0", num: "P1", title: "LangChain 基础 — Agent 的砖石", path: "第零部分-前置篇/LangChain基础-Agent的砖石.md", subtitle: "消息;模型;工具;RunnableConfig;回调" },
   { id: "P2", part: "p0", num: "P2", title: "LangGraph 基础 — Agent 的骨架", path: "第零部分-前置篇/LangGraph基础-Agent的骨架.md", subtitle: "create_agent;状态;中间件6钩子;检查点;流式" },
+  { id: "P3", part: "p0", num: "P3", title: "能力注入与运行模式 — 一图看懂全流程", path: "第零部分-前置篇/能力注入与运行模式.md", subtitle: "能力注入全景;4模式(闪速/思考/PRO/Ultra)链路" },
 
   // Part 1
   { id: "01", part: "p1", num: "01", title: "智能体编程的新范式", path: "第一部分-基础篇/01-智能体编程的新范式.md", subtitle: "Copilot→Agent 演进;Harness/App 分层;服务拓扑" },
