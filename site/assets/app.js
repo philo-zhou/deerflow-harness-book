@@ -11,6 +11,7 @@ const PARTS = [
   { id: "p2", name: "第二部分 · 核心系统篇", tag: "深入子系统" },
   { id: "p3", name: "第三部分 · 高级模式篇", tag: "组合与扩展" },
   { id: "p4", name: "第四部分 · 工程实践篇", tag: "从原理到运行时" },
+  { id: "p5", name: "第五部分 · 架构总结", tag: "从装配到运行的全景" },
   { id: "pa", name: "附录", tag: "参考资料速查" },
 ];
 
@@ -23,7 +24,6 @@ const MANIFEST = [
   { id: "P2", part: "p0", num: "P2", title: "LangGraph 基础 — Agent 的骨架", path: "第零部分-前置篇/LangGraph基础-Agent的骨架.md", subtitle: "create_agent;状态;中间件6钩子;检查点;流式" },
   { id: "P3", part: "p0", num: "P3", title: "能力注入与运行模式 — 一图看懂全流程", path: "第零部分-前置篇/能力注入与运行模式.md", subtitle: "能力注入全景;4模式(闪速/思考/PRO/Ultra)链路" },
   { id: "P4", part: "p0", num: "P4", title: "函数调用管线总览 — 从入口到出口的真实调用链", path: "第零部分-前置篇/函数调用管线总览.md", subtitle: "装配/执行/六钩子/子智能体/流式 五条真实调用链" },
-  { id: "P5", part: "p0", num: "P5", title: "整体管线 — 一条消息的完整旅程", path: "第零部分-前置篇/整体管线-一条消息的完整旅程.md", subtitle: "HTTP→start_run→装配→astream→StreamBridge→SSE 端到端一条链" },
 
   // Part 1
   { id: "01", part: "p1", num: "01", title: "智能体编程的新范式", path: "第一部分-基础篇/01-智能体编程的新范式.md", subtitle: "Copilot→Agent 演进;Harness/App 分层;服务拓扑" },
@@ -50,6 +50,10 @@ const MANIFEST = [
   { id: "16", part: "p4", num: "16", title: "Gateway API 与 IM 渠道", path: "第四部分-工程实践篇/16-Gateway-API与IM渠道.md", subtitle: "FastAPI lifespan;路由器;IM 消息总线" },
   { id: "17", part: "p4", num: "17", title: "嵌入式客户端与 TUI", path: "第四部分-工程实践篇/17-嵌入式客户端与TUI.md", subtitle: "DeerFlowClient;TUI redux;ThreadMetaWriter" },
   { id: "18", part: "p4", num: "18", title: "构建你自己的 Agent Harness", path: "第四部分-工程实践篇/18-构建你自己的Agent-Harness.md", subtitle: "链路追踪;安全威胁模型;六步路线图" },
+
+  // Part 5 架构总结(非数字 ID,不计入 18 章进度,但参与上下章导航)
+  { id: "G1", part: "p5", num: "G1", title: "图的装配 — create_agent 如何把中间件编织成图", path: "第五部分-架构总结/G1-图的装配.md", subtitle: "6 钩子分桶;4 锚点;正逆串联;jump_to;deerflow 实际建出的图" },
+  { id: "P5", part: "p5", num: "P5", title: "整体管线 — 一条消息的完整旅程", path: "第五部分-架构总结/整体管线-一条消息的完整旅程.md", subtitle: "HTTP→start_run→装配→astream→StreamBridge→SSE 端到端七驿站" },
 
   // 附录
   { id: "A", part: "pa", num: "A", title: "源码导航地图", path: "附录/A-源码导航地图.md", subtitle: "模块依赖树;Harness/App 边界;数据流" },
@@ -516,7 +520,7 @@ function renderCover() {
     <div class="cover-stats">
       <div class="stat"><span class="num">18</span><span class="lbl">章节</span></div>
       <div class="stat"><span class="num">5</span><span class="lbl">附录</span></div>
-      <div class="stat"><span class="num">72</span><span class="lbl">架构图</span></div>
+      <div class="stat"><span class="num">77</span><span class="lbl">架构图</span></div>
       <div class="stat"><span class="num" id="coverProgress">${done} / ${CHAPTER_IDS.length}</span><span class="lbl">已学完</span></div>
     </div>
     <div class="cover-features">
