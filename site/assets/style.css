@@ -306,8 +306,8 @@ body {
 .outline a { display: block; padding: 4px 0 4px 12px; font-size: 0.8rem; color: var(--fg-muted); text-decoration: none; border-left: 2px solid transparent; line-height: 1.4; }
 .outline a:hover { color: var(--fg); }
 .outline a.active { color: var(--primary); border-left-color: var(--primary); font-weight: 600; }
-.outline a.lvl3 { padding-left: 24px; font-size: 0.76rem; }
-.outline a.lvl4 { padding-left: 36px; font-size: 0.74rem; color: var(--fg-faint); }
+.outline a.lvl-h3 { padding-left: 24px; font-size: 0.76rem; }
+.outline a.lvl-h4 { padding-left: 36px; font-size: 0.74rem; color: var(--fg-faint); }
 
 /* ==========================================================================
    封面页
